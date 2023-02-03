@@ -1,0 +1,60 @@
+version: '2.1'
+
+services:
+  bot-help-php:
+    working_dir: /var/www
+    container_name: bot-help-php
+    build:
+      context: ./docker/php
+      dockerfile: Dockerfile
+    user: 1000:1000
+    volumes:
+      - ./:/var/www
+      - ./var/composer:/var/www/var/composer
+    environment:
+      COMPOSER_HOME: /var/www/var/composer
+      XDEBUG_CONFIG: client_host=${DOCKER_GATEWAY_HOST:-host.docker.internal}
+      PHP_IDE_CONFIG: serverName=bot-help
+    depends_on:
+      bot-help-rabbitmq:
+        condition: service_healthy
+
+  bot-help-rabbitmq:
+    image: rabbitmq:3.8-management
+    container_name: bot-help-rabbitmq
+    volumes:
+      - bot-help-rabbitmq-data:/var/log/rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: root
+      RABBITMQ_DEFAULT_PASS: root
+    ports:
+      - '5672:5672'
+      - '15672:15672'
+    healthcheck:
+      test: rabbitmq-diagnostics -q ping
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  bot-help-nginx:
+    container_name: bot-help-nginx
+    image: nginx:latest
+    volumes:
+      - ./:/var/www
+      - ./docker/nginx/config:/etc/nginx/conf.d
+      - ./docker/nginx/templates:/etc/nginx/templates
+      - ./docker/nginx/logs:/var/log/nginx
+    ports:
+      - '8081:80'
+      - '4434:443'
+    depends_on:
+      - bot-help-php
+    env_file:
+      - .env
+    networks:
+      default:
+        aliases:
+          - api.bot-help.local
+
+volumes:
+  bot-help-rabbitmq-data:
