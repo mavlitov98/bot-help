@@ -4,21 +4,22 @@ declare(strict_types=1);
 
 namespace App\Command;
 
+use Amp\Loop;
 use Throwable;
-use Fp\Streams\Stream;
 use Psr\Log\LoggerInterface;
-use PhpAmqpLib\Message\AMQPMessage;
-use App\Service\Event\EventMessageHandler;
+use PHPinnacle\Ridge\Client;
+use Fp\Collections\ArrayList;
+use PHPinnacle\Ridge\Message;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
-use App\Infrastructure\RabbitMQ\ConnectionProvider;
 use Symfony\Component\Console\Output\OutputInterface;
+
+use function Amp\delay;
+use function Amp\Promise\all;
 
 final class ConsumeEventsCommand extends Command
 {
     public function __construct(
-        private readonly ConnectionProvider $connectionProvider,
-        private readonly EventMessageHandler $eventMessageHandler,
         private readonly LoggerInterface $logger,
     ) {
         parent::__construct();
@@ -36,32 +37,28 @@ final class ConsumeEventsCommand extends Command
 
     public function execute(InputInterface $input, OutputInterface $output): void
     {
-        $connection = $this->connectionProvider->provide();
-        $channel = $connection->channel();
+        Loop::run(function () {
+            $client = Client::create('amqp://root:root@bot-help-rabbitmq:5672');
+            yield $client->connect();
 
-        Stream::range(3, 11)
-            ->tap(function (int $queueName) use ($channel, $connection) {
-                $channel->basic_consume((string) $queueName, callback: function(AMQPMessage $msg): void {
-                    try {
-                        $this->eventMessageHandler->handle();
-                    }
-                    catch (Throwable $exception) {
-                        $this->logger->error(
-                            message: $exception->getMessage(),
-                            context: ['exception' => $exception],
-                        );
-                    } finally {
-                        $msg->ack();
-                    }
-                });
+            $channel = yield $client->channel();
 
-                while ($channel->is_open()) {
-                    $channel->wait();
-                }
+            $promises = ArrayList::range(1, 1001)
+                ->map(fn(int $queueName) => $channel->consume(
+                    callback: function (Message $message) use ($channel) {
+                        try {
+                            yield delay(1);
+                        } catch (Throwable $exception) {
+                            $this->logger->error($exception->getMessage(), ['exception' => $exception]);
+                        } finally {
+                            yield $channel->ack($message);
+                        }
+                    },
+                    queue: (string) $queueName,
+                ))
+                ->toList();
 
-                $channel->close();
-                $connection->close();
-            })
-            ->drain();
+            yield all($promises);
+        });
     }
 }
