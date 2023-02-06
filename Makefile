@@ -13,3 +13,6 @@ docker-exec-php-bash:
 
 docker-exec-php-composer-install:
 	docker-compose exec bot-help-php composer install
+
+consume-events:
+	docker-compose exec bot-help-php bin/console cli:events:consume
