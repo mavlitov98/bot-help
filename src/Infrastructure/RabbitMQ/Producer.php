@@ -8,7 +8,6 @@ use Fp\Streams\Stream;
 use PhpAmqpLib\Wire\AMQPTable;
 use PhpAmqpLib\Message\AMQPMessage;
 use App\Service\Event\QueuedMessageInterface;
-use Symfony\Component\Serializer\SerializerInterface;
 
 final class Producer
 {
@@ -17,7 +16,6 @@ final class Producer
      */
     public function __construct(
         private readonly ConnectionProvider $connectionProvider,
-        private readonly SerializerInterface $serializer,
         private readonly string $exchange,
     ) {}
 
@@ -36,11 +34,17 @@ final class Producer
 
         Stream::emits($messages)
             ->tap(function (QueuedMessageInterface $message) use ($channel): void {
-                $channel->queue_declare($message->getQueueName());
+                $args = new AMQPTable([
+                    // https://www.rabbitmq.com/consumers.html#single-active-consumer
+                    // Для гарантии обработки сообщений по порядку, в рамках одной очереди.
+                    'x-single-active-consumer' => true,
+                ]);
+
+                $channel->queue_declare($message->getQueueName(), durable: true, auto_delete: false, arguments: $args);
                 $channel->queue_bind($message->getQueueName(), $this->exchange, $message->getRoutingKey());
 
                 $channel->batch_basic_publish(
-                    message: $this->createAmqpMessage($message),
+                    message: new AMQPMessage(json_encode($message)),
                     exchange: $this->exchange,
                     routing_key: $message->getRoutingKey(),
                 );
@@ -48,25 +52,5 @@ final class Producer
             ->drain();
 
         $channel->publish_batch();
-    }
-
-    /**
-     * @param list<string, mixed> $headers
-     */
-    private function createAmqpMessage(QueuedMessageInterface $message, array $headers = []): AMQPMessage
-    {
-        $amqpMessage = new AMQPMessage(
-            body: $this->serializer->serialize($message, 'json'),
-            properties: [],
-        );
-
-        $headersTable = new AMQPTable([
-            ...$headers,
-            'object_type' => get_class($message),
-        ]);
-
-        $amqpMessage->set('application_headers', $headersTable);
-
-        return $amqpMessage;
     }
 }

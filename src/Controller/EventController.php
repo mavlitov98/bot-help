@@ -20,8 +20,8 @@ final class EventController extends AbstractController
     #[Route(path: '/event', methods: ['POST'])]
     public function event(): JsonResponse
     {
-        $messages = ArrayList::range(1, 1001)
-            ->flatMap(fn(int $accountId) => ArrayList::range(1, 11)
+        $messages = ArrayList::collect(range(1, 1000))
+            ->flatMap(fn(int $accountId) => ArrayList::collect(range(1, 10))
                 ->map(fn(int $eventId) => new EventMessage($eventId, $accountId))
                 ->toList());
 

@@ -5,22 +5,23 @@ declare(strict_types=1);
 namespace App\Command;
 
 use Amp\Loop;
-use Throwable;
-use Psr\Log\LoggerInterface;
+use PHPinnacle\Ridge\Channel;
 use PHPinnacle\Ridge\Client;
-use Fp\Collections\ArrayList;
 use PHPinnacle\Ridge\Message;
 use Symfony\Component\Console\Command\Command;
 use Symfony\Component\Console\Input\InputInterface;
 use Symfony\Component\Console\Output\OutputInterface;
 
 use function Amp\delay;
-use function Amp\Promise\all;
+use function Amp\asyncCall;
 
 final class ConsumeEventsCommand extends Command
 {
     public function __construct(
-        private readonly LoggerInterface $logger,
+        private readonly string $host,
+        private readonly int $port,
+        private readonly string $login,
+        private readonly string $password,
     ) {
         parent::__construct();
     }
@@ -35,30 +36,51 @@ final class ConsumeEventsCommand extends Command
         $this->setDescription('Чтение событий из очереди');
     }
 
-    public function execute(InputInterface $input, OutputInterface $output): void
+    private static function handleMessage(Message $message, Channel $channel): void
     {
-        Loop::run(function () {
-            $client = Client::create('amqp://root:root@bot-help-rabbitmq:5672');
+        asyncCall(function () use ($message, $channel) {
+            // Simulate useful IO work.
+            // HTTP request for example.
+            yield delay(1);
+
+            yield $channel->ack($message);
+        });
+    }
+
+    public function execute(InputInterface $input, OutputInterface $output): int
+    {
+        Loop::run(function () use ($output) {
+            $client = Client::create("amqp://{$this->login}:{$this->password}@{$this->host}:{$this->port}");
             yield $client->connect();
+
+            $output->writeln('Declare consumers...');
 
             $channel = yield $client->channel();
 
-            $promises = ArrayList::range(1, 1001)
-                ->map(fn(int $queueName) => $channel->consume(
-                    callback: function (Message $message) use ($channel) {
-                        try {
-                            yield delay(1);
-                        } catch (Throwable $exception) {
-                            $this->logger->error($exception->getMessage(), ['exception' => $exception]);
-                        } finally {
-                            yield $channel->ack($message);
-                        }
-                    },
+            foreach (range(1, 1000) as $queueName) {
+                yield $channel->consume(
+                    callback: self::handleMessage(...),
                     queue: (string) $queueName,
-                ))
-                ->toList();
+                );
+            }
+            $output->writeln('Consumers declared!');
 
-            yield all($promises);
+            // Graceful shutdown handler.
+            $terminate = function (string $id) use ($channel, $client, $output) {
+                Loop::cancel($id);
+
+                $output->writeln('Disconnecting...');
+                yield $channel->close();
+                yield $client->disconnect();
+                $output->writeln('Disconnected!');
+
+                Loop::stop();
+            };
+
+            Loop::onSignal(SIGINT, $terminate);
+            Loop::onSignal(SIGTERM, $terminate);
         });
+
+        return self::SUCCESS;
     }
 }

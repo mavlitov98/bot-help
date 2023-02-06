@@ -17,6 +17,13 @@ services:
       $login: '%env(AMQP_LOGIN)%'
       $password: '%env(AMQP_PASSWORD)%'
 
+  App\Command\ConsumeEventsCommand:
+    arguments:
+      $host: '%env(AMQP_HOST)%'
+      $port: '%env(AMQP_PORT)%'
+      $login: '%env(AMQP_LOGIN)%'
+      $password: '%env(AMQP_PASSWORD)%'
+
   App\Infrastructure\RabbitMQ\Producer:
     arguments:
       $exchange: 'events'
